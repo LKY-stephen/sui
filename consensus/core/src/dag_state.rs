@@ -1397,6 +1397,7 @@ mod test {
             1 as CommitIndex,
             CommitDigest::MIN,
             0,
+            0,
             blocks.last().unwrap().reference(),
             blocks
                 .into_iter()
@@ -1452,6 +1453,7 @@ mod test {
         dag_state.add_commit(TrustedCommit::new_for_test(
             1 as CommitIndex,
             CommitDigest::MIN,
+            0,
             0,
             dag_builder.leader_block(5).unwrap().reference(),
             vec![],
@@ -1995,6 +1997,7 @@ mod test {
         dag_state.add_commit(TrustedCommit::new_for_test(
             1 as CommitIndex,
             CommitDigest::MIN,
+            0,
             context.clock.timestamp_utc_ms(),
             dag_builder.leader_block(3).unwrap().reference(),
             vec![],
@@ -2058,6 +2061,7 @@ mod test {
         dag_state.add_commit(TrustedCommit::new_for_test(
             1 as CommitIndex,
             CommitDigest::MIN,
+            0,
             0,
             all_blocks.last().unwrap().reference(),
             all_blocks
@@ -2129,6 +2133,7 @@ mod test {
         dag_state.add_commit(TrustedCommit::new_for_test(
             1 as CommitIndex,
             CommitDigest::MIN,
+            0,
             0,
             dag_builder.leader_block(3).unwrap().reference(),
             vec![],

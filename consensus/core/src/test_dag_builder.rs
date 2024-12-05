@@ -207,6 +207,7 @@ impl DagBuilder {
                 last_commit_index,
                 CommitDigest::MIN,
                 last_timestamp_ms,
+                last_timestamp_ms,
                 leader_block_ref,
                 to_commit
                     .iter()
@@ -218,6 +219,7 @@ impl DagBuilder {
                 leader_block_ref,
                 to_commit,
                 rejected_transactions,
+                last_timestamp_ms,
                 last_timestamp_ms,
                 commit.reference(),
                 vec![],

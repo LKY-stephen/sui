@@ -1113,6 +1113,7 @@ mod tests {
             blocks.clone(),
             vec![vec![]; blocks.len()],
             leader_block.timestamp_ms(),
+            leader_block.timestamp_ms(),
             CommitRef::new(10, CommitDigest::MIN),
             vec![],
         );

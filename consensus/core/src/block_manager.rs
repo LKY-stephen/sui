@@ -723,6 +723,7 @@ mod tests {
         let last_commit = TrustedCommit::new_for_test(
             10,
             CommitDigest::MIN,
+            0,
             context.clock.timestamp_utc_ms(),
             BlockRef::new(10, AuthorityIndex::new_for_test(0), BlockDigest::MIN),
             vec![],
@@ -813,6 +814,7 @@ mod tests {
         let last_commit = TrustedCommit::new_for_test(
             10,
             CommitDigest::MIN,
+            0,
             context.clock.timestamp_utc_ms(),
             BlockRef::new(10, AuthorityIndex::new_for_test(0), BlockDigest::MIN),
             vec![],
@@ -950,6 +952,7 @@ mod tests {
             let last_commit = TrustedCommit::new_for_test(
                 gc_depth * 2,
                 CommitDigest::MIN,
+                0,
                 context.clock.timestamp_utc_ms(),
                 BlockRef::new(
                     gc_depth * 2,

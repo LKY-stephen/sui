@@ -82,6 +82,7 @@ impl Linearizer {
         let commit = Commit::new(
             last_commit_index + 1,
             last_commit_digest,
+            last_commit_timestamp_ms,
             timestamp_ms,
             leader_block.reference(),
             to_commit
@@ -99,6 +100,7 @@ impl Linearizer {
             leader_block.reference(),
             to_commit,
             rejected_transactions,
+            last_commit_timestamp_ms,
             timestamp_ms,
             commit.reference(),
             reputation_scores_desc,
@@ -469,6 +471,7 @@ mod tests {
             last_commit_index,
             CommitDigest::MIN,
             0,
+            0,
             first_leader.reference(),
             blocks.into_iter().map(|block| block.reference()).collect(),
         );
@@ -501,6 +504,7 @@ mod tests {
         let expected_second_commit = TrustedCommit::new_for_test(
             last_commit_index,
             CommitDigest::MIN,
+            0,
             0,
             leader.reference(),
             blocks.clone(),

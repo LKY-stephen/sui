@@ -594,6 +594,7 @@ mod tests {
             BlockRef::new(1, AuthorityIndex::ZERO, BlockDigest::MIN),
             blocks,
             vec![],
+            0,
             context.clock.timestamp_utc_ms(),
             CommitRef::new(1, CommitDigest::MIN),
             vec![],

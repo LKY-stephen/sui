@@ -64,6 +64,7 @@ impl Commit {
     pub(crate) fn new(
         index: CommitIndex,
         previous_digest: CommitDigest,
+        previous_timestamp_ms: BlockTimestampMs,
         timestamp_ms: BlockTimestampMs,
         leader: BlockRef,
         blocks: Vec<BlockRef>,
@@ -71,6 +72,7 @@ impl Commit {
         Commit::V1(CommitV1 {
             index,
             previous_digest,
+            previous_timestamp_ms,
             timestamp_ms,
             leader,
             blocks,
@@ -89,6 +91,7 @@ pub(crate) trait CommitAPI {
     fn round(&self) -> Round;
     fn index(&self) -> CommitIndex;
     fn previous_digest(&self) -> CommitDigest;
+    fn previous_timestamp_ms(&self) -> BlockTimestampMs;
     fn timestamp_ms(&self) -> BlockTimestampMs;
     fn leader(&self) -> BlockRef;
     fn blocks(&self) -> &[BlockRef];
@@ -104,6 +107,8 @@ pub(crate) struct CommitV1 {
     /// Digest of the previous commit.
     /// Set to CommitDigest::MIN for the first commit after genesis.
     previous_digest: CommitDigest,
+    // Timestamp of the previous commit.
+    previous_timestamp_ms: BlockTimestampMs,
     /// Timestamp of the commit, max of the timestamp of the leader block and previous Commit timestamp.
     timestamp_ms: BlockTimestampMs,
     /// A reference to the commit leader.
@@ -124,6 +129,10 @@ impl CommitAPI for CommitV1 {
 
     fn previous_digest(&self) -> CommitDigest {
         self.previous_digest
+    }
+
+    fn previous_timestamp_ms(&self) -> BlockTimestampMs {
+        self.previous_timestamp_ms
     }
 
     fn timestamp_ms(&self) -> BlockTimestampMs {
@@ -147,7 +156,6 @@ impl CommitAPI for CommitV1 {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TrustedCommit {
     inner: Arc<Commit>,
-
     // Cached digest and serialized value, to avoid re-computing these values.
     digest: CommitDigest,
     serialized: Bytes,
@@ -167,11 +175,19 @@ impl TrustedCommit {
     pub(crate) fn new_for_test(
         index: CommitIndex,
         previous_digest: CommitDigest,
+        previous_timestamp_ms: BlockTimestampMs,
         timestamp_ms: BlockTimestampMs,
         leader: BlockRef,
         blocks: Vec<BlockRef>,
     ) -> Self {
-        let commit = Commit::new(index, previous_digest, timestamp_ms, leader, blocks);
+        let commit = Commit::new(
+            index,
+            previous_digest,
+            previous_timestamp_ms,
+            timestamp_ms,
+            leader,
+            blocks,
+        );
         let serialized = commit.serialize().unwrap();
         Self::new_trusted(commit, serialized)
     }
@@ -297,6 +313,8 @@ pub struct CommittedSubDag {
     pub blocks: Vec<VerifiedBlock>,
     /// Indices of rejected transactions in each block.
     pub rejected_transactions_by_block: Vec<Vec<TransactionIndex>>,
+    /// The timestamp of the previous sub-dag, obtained when created from the commit.
+    pub previous_timestamp_ms: BlockTimestampMs,
     /// The timestamp of the commit, obtained from the timestamp of the leader block.
     pub timestamp_ms: BlockTimestampMs,
     /// The reference of the commit.
@@ -314,6 +332,7 @@ impl CommittedSubDag {
         leader: BlockRef,
         blocks: Vec<VerifiedBlock>,
         rejected_transactions_by_block: Vec<Vec<TransactionIndex>>,
+        previous_timestamp_ms: BlockTimestampMs,
         timestamp_ms: BlockTimestampMs,
         commit_ref: CommitRef,
         reputation_scores_desc: Vec<(AuthorityIndex, u64)>,
@@ -323,6 +342,7 @@ impl CommittedSubDag {
             leader,
             blocks,
             rejected_transactions_by_block,
+            previous_timestamp_ms,
             timestamp_ms,
             commit_ref,
             reputation_scores_desc,
@@ -401,6 +421,7 @@ pub fn load_committed_subdag_from_store(
         leader_block_ref,
         blocks,
         rejected_transactions,
+        commit.previous_timestamp_ms(),
         commit.timestamp_ms(),
         commit.reference(),
         reputation_scores_desc,
@@ -664,6 +685,7 @@ mod tests {
         let commit = TrustedCommit::new_for_test(
             commit_index,
             CommitDigest::MIN,
+            0,
             leader_block.timestamp_ms(),
             leader_ref,
             blocks.clone(),

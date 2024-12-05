@@ -512,7 +512,7 @@ mod tests {
     use super::*;
     use crate::{
         block::{BlockDigest, BlockRef, BlockTimestampMs, TestBlock, VerifiedBlock},
-        commit::{CommitDigest, CommitInfo, CommitRef, CommittedSubDag, TrustedCommit},
+        commit::{CommitAPI, CommitDigest, CommitInfo, CommitRef, CommittedSubDag, TrustedCommit},
         storage::{mem_store::MemStore, Store, WriteBatch},
         test_dag_builder::DagBuilder,
     };
@@ -749,6 +749,7 @@ mod tests {
             BlockRef::new(1, AuthorityIndex::ZERO, BlockDigest::MIN),
             vec![],
             vec![],
+            0,
             context.clock.timestamp_utc_ms(),
             CommitRef::new(1, CommitDigest::MIN),
             vec![],
@@ -835,6 +836,7 @@ mod tests {
         let last_commit = TrustedCommit::new_for_test(
             commit_index,
             CommitDigest::MIN,
+            0,
             context.clock.timestamp_utc_ms(),
             leader_ref,
             blocks
@@ -847,6 +849,7 @@ mod tests {
             leader_ref,
             blocks,
             rejected_transactions,
+            last_commit.previous_timestamp_ms(),
             context.clock.timestamp_utc_ms(),
             last_commit.reference(),
             vec![],
@@ -1257,6 +1260,7 @@ mod tests {
             BlockRef::new(1, AuthorityIndex::ZERO, BlockDigest::MIN),
             vec![],
             vec![],
+            0,
             context.clock.timestamp_utc_ms(),
             CommitRef::new(1, CommitDigest::MIN),
             vec![],
@@ -1349,6 +1353,7 @@ mod tests {
         let last_commit = TrustedCommit::new_for_test(
             commit_index,
             CommitDigest::MIN,
+            0,
             context.clock.timestamp_utc_ms(),
             leader_ref,
             blocks
@@ -1361,6 +1366,7 @@ mod tests {
             leader_ref,
             blocks,
             rejected_transactions,
+            last_commit.previous_timestamp_ms(),
             context.clock.timestamp_utc_ms(),
             last_commit.reference(),
             vec![],
