@@ -34,6 +34,7 @@ use sui_types::transaction::VerifiedTransaction;
 use tap::Pipe;
 
 use crate::authority::AuthorityState;
+use crate::auto_execution::AutoExecutionStore;
 use crate::checkpoints::CheckpointStore;
 use crate::epoch::committee_store::CommitteeStore;
 use crate::execution_cache::ExecutionCacheTraitPointers;
@@ -48,6 +49,7 @@ pub struct RocksDbStore {
 
     committee_store: Arc<CommitteeStore>,
     checkpoint_store: Arc<CheckpointStore>,
+    auto_execution_store: Arc<AutoExecutionStore>,
     // in memory checkpoint watermark sequence numbers
     highest_verified_checkpoint: Arc<Mutex<Option<u64>>>,
     highest_synced_checkpoint: Arc<Mutex<Option<u64>>>,
@@ -58,11 +60,13 @@ impl RocksDbStore {
         cache_traits: ExecutionCacheTraitPointers,
         committee_store: Arc<CommitteeStore>,
         checkpoint_store: Arc<CheckpointStore>,
+        auto_execution_store: Arc<AutoExecutionStore>,
     ) -> Self {
         Self {
             cache_traits,
             committee_store,
             checkpoint_store,
+            auto_execution_store,
             highest_verified_checkpoint: Arc::new(Mutex::new(None)),
             highest_synced_checkpoint: Arc::new(Mutex::new(None)),
         }

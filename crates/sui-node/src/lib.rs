@@ -69,6 +69,7 @@ use sui_core::authority::epoch_start_configuration::EpochStartConfigTrait;
 use sui_core::authority::epoch_start_configuration::EpochStartConfiguration;
 use sui_core::authority_aggregator::{AuthAggMetrics, AuthorityAggregator};
 use sui_core::authority_server::{ValidatorService, ValidatorServiceMetrics};
+use sui_core::auto_execution::AutoExecutionStore;
 use sui_core::checkpoints::checkpoint_executor::metrics::CheckpointExecutorMetrics;
 use sui_core::checkpoints::checkpoint_executor::{CheckpointExecutor, StopReason};
 use sui_core::checkpoints::{
@@ -239,6 +240,7 @@ pub struct SuiNode {
     state_sync_handle: state_sync::Handle,
     randomness_handle: randomness::Handle,
     checkpoint_store: Arc<CheckpointStore>,
+    auto_execution_store: Arc<AutoExecutionStore>,
     accumulator: Mutex<Option<Arc<StateAccumulator>>>,
     connection_monitor_status: Arc<ConnectionMonitorStatus>,
 
@@ -562,11 +564,15 @@ impl SuiNode {
             &epoch_store,
         );
 
+        let auto_execution_store =
+            AutoExecutionStore::new(&config.db_path().join("auto_execution"));
+
         info!("creating state sync store");
         let state_sync_store = RocksDbStore::new(
             cache_traits.clone(),
             committee_store.clone(),
             checkpoint_store.clone(),
+            auto_execution_store.clone(),
         );
 
         let index_store = if is_full_node && config.enable_index_processing {
@@ -807,6 +813,7 @@ impl SuiNode {
                 committee,
                 epoch_store.clone(),
                 checkpoint_store.clone(),
+                auto_execution_store.clone(),
                 state_sync_handle.clone(),
                 randomness_handle.clone(),
                 Arc::downgrade(&accumulator),
@@ -840,6 +847,7 @@ impl SuiNode {
             state_sync_handle,
             randomness_handle,
             checkpoint_store,
+            auto_execution_store,
             accumulator: Mutex::new(Some(accumulator)),
             end_of_epoch_channel,
             connection_monitor_status,
@@ -1185,6 +1193,7 @@ impl SuiNode {
         committee: Arc<Committee>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         checkpoint_store: Arc<CheckpointStore>,
+        auto_execution_store: Arc<AutoExecutionStore>,
         state_sync_handle: state_sync::Handle,
         randomness_handle: randomness::Handle,
         accumulator: Weak<StateAccumulator>,
@@ -1254,6 +1263,7 @@ impl SuiNode {
             state.clone(),
             consensus_adapter,
             checkpoint_store,
+            auto_execution_store,
             epoch_store,
             state_sync_handle,
             randomness_handle,
@@ -1274,6 +1284,7 @@ impl SuiNode {
         state: Arc<AuthorityState>,
         consensus_adapter: Arc<ConsensusAdapter>,
         checkpoint_store: Arc<CheckpointStore>,
+        auto_execution_store: Arc<AutoExecutionStore>,
         epoch_store: Arc<AuthorityPerEpochStore>,
         state_sync_handle: state_sync::Handle,
         randomness_handle: randomness::Handle,
@@ -1340,6 +1351,7 @@ impl SuiNode {
             epoch_store.clone(),
             low_scoring_authorities,
             throughput_calculator,
+            auto_execution_store,
         );
 
         consensus_manager
@@ -1744,6 +1756,7 @@ impl SuiNode {
                             self.state.clone(),
                             consensus_adapter,
                             self.checkpoint_store.clone(),
+                            self.auto_execution_store.clone(),
                             new_epoch_store.clone(),
                             self.state_sync_handle.clone(),
                             self.randomness_handle.clone(),
@@ -1796,6 +1809,7 @@ impl SuiNode {
                             Arc::new(next_epoch_committee.clone()),
                             new_epoch_store.clone(),
                             self.checkpoint_store.clone(),
+                            self.auto_execution_store.clone(),
                             self.state_sync_handle.clone(),
                             self.randomness_handle.clone(),
                             weak_accumulator,

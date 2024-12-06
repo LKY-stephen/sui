@@ -2564,6 +2564,7 @@ impl AuthorityPerEpochStore {
                 kind: ConsensusTransactionKind::CertifiedTransaction(_certificate),
                 ..
             }) => {}
+            SequencedConsensusTransactionKind::Internal(_) => {}
             SequencedConsensusTransactionKind::External(ConsensusTransaction {
                 kind: ConsensusTransactionKind::UserTransaction(_tx),
                 ..
@@ -3542,6 +3543,24 @@ impl AuthorityPerEpochStore {
                 // Safe because signatures are verified when consensus called into SuiTxValidator::validate_batch.
                 let certificate = VerifiedCertificate::new_unchecked(*certificate.clone());
                 let transaction = VerifiedExecutableTransaction::new_from_certificate(certificate);
+
+                self.process_consensus_user_transaction(
+                    transaction,
+                    certificate_author,
+                    commit_round,
+                    tracking_id,
+                    previously_deferred_tx_digests,
+                    dkg_failed,
+                    generating_randomness,
+                    shared_object_congestion_tracker,
+                    authority_metrics,
+                )
+            }
+            SequencedConsensusTransactionKind::Internal(auto_transaction) => {
+                let transaction = VerifiedExecutableTransaction::from_auto_executable_transaction(
+                    auto_transaction,
+                    self.epoch(),
+                );
 
                 self.process_consensus_user_transaction(
                     transaction,

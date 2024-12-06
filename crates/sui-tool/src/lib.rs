@@ -18,6 +18,7 @@ use std::time::Duration;
 use std::{fs, io};
 use sui_config::{genesis::Genesis, NodeConfig};
 use sui_core::authority_client::{AuthorityAPI, NetworkAuthorityClient};
+use sui_core::auto_execution::AutoExecutionStore;
 use sui_core::execution_cache::build_execution_cache_from_env;
 use sui_network::default_mysten_network_config;
 use sui_protocol_config::Chain;
@@ -580,6 +581,7 @@ fn start_summary_sync(
     perpetual_db: Arc<AuthorityPerpetualTables>,
     committee_store: Arc<CommitteeStore>,
     checkpoint_store: Arc<CheckpointStore>,
+    auto_execution_store: Arc<AutoExecutionStore>,
     m: MultiProgress,
     genesis: Genesis,
     archive_store_config: ObjectStoreConfig,
@@ -593,8 +595,12 @@ fn start_summary_sync(
         let store =
             AuthorityStore::open_no_genesis(perpetual_db, usize::MAX, false, &Registry::default())?;
         let cache_traits = build_execution_cache_from_env(&Registry::default(), &store);
-        let state_sync_store =
-            RocksDbStore::new(cache_traits, committee_store, checkpoint_store.clone());
+        let state_sync_store = RocksDbStore::new(
+            cache_traits,
+            committee_store,
+            checkpoint_store.clone(),
+            auto_execution_store.clone(),
+        );
         // Only insert the genesis checkpoint if the DB is empty and doesn't have it already
         if checkpoint_store
             .get_checkpoint_by_digest(genesis.checkpoint().digest())
@@ -854,11 +860,18 @@ pub async fn download_formal_snapshot(
         None,
         None,
     ));
+    let auto_execution_store = Arc::new(AutoExecutionStore::open_tables_read_write(
+        path.join("auto_execution"),
+        MetricConf::default(),
+        None,
+        None,
+    ));
 
     let summaries_handle = start_summary_sync(
         perpetual_db.clone(),
         committee_store.clone(),
         checkpoint_store.clone(),
+        auto_execution_store.clone(),
         m.clone(),
         genesis.clone(),
         archive_store_config.clone(),

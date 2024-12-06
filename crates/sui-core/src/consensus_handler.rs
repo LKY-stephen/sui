@@ -22,6 +22,7 @@ use sui_macros::{fail_point_async, fail_point_if};
 use sui_protocol_config::ProtocolConfig;
 use sui_types::{
     authenticator_state::ActiveJwk,
+    auto_executable_transaction::AutoExecutableTransaction,
     base_types::{AuthorityName, EpochId, ObjectID, SequenceNumber, TransactionDigest},
     digests::ConsensusCommitDigest,
     executable_transaction::{TrustedExecutableTransaction, VerifiedExecutableTransaction},
@@ -43,6 +44,7 @@ use crate::{
         epoch_start_configuration::EpochStartConfigTrait,
         AuthorityMetrics, AuthorityState,
     },
+    auto_execution::AutoExecutionStore,
     checkpoints::{CheckpointService, CheckpointServiceNotify},
     consensus_throughput_calculator::ConsensusThroughputCalculator,
     consensus_types::consensus_output_api::{parse_block_transactions, ConsensusCommitAPI},
@@ -57,6 +59,7 @@ pub struct ConsensusHandlerInitializer {
     epoch_store: Arc<AuthorityPerEpochStore>,
     low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
     throughput_calculator: Arc<ConsensusThroughputCalculator>,
+    auto_execution_store: Arc<AutoExecutionStore>,
 }
 
 impl ConsensusHandlerInitializer {
@@ -66,6 +69,7 @@ impl ConsensusHandlerInitializer {
         epoch_store: Arc<AuthorityPerEpochStore>,
         low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
         throughput_calculator: Arc<ConsensusThroughputCalculator>,
+        auto_execution_store: Arc<AutoExecutionStore>,
     ) -> Self {
         Self {
             state,
@@ -73,6 +77,7 @@ impl ConsensusHandlerInitializer {
             epoch_store,
             low_scoring_authorities,
             throughput_calculator,
+            auto_execution_store,
         }
     }
 
@@ -90,6 +95,7 @@ impl ConsensusHandlerInitializer {
                 None,
                 state.metrics.clone(),
             )),
+            auto_execution_store: AutoExecutionStore::new_for_test(),
         }
     }
 
@@ -106,6 +112,7 @@ impl ConsensusHandlerInitializer {
             consensus_committee,
             self.state.metrics.clone(),
             self.throughput_calculator.clone(),
+            self.auto_execution_store.clone(),
         )
     }
 
@@ -138,6 +145,8 @@ pub struct ConsensusHandler<C> {
     transaction_manager_sender: TransactionManagerSender,
     /// Using the throughput calculator to record the current consensus throughput
     throughput_calculator: Arc<ConsensusThroughputCalculator>,
+    /// Store for auto-execution transactions
+    auto_execution_store: Arc<AutoExecutionStore>,
 }
 
 const PROCESSED_CACHE_CAP: usize = 1024 * 1024;
@@ -152,6 +161,7 @@ impl<C> ConsensusHandler<C> {
         committee: ConsensusCommittee,
         metrics: Arc<AuthorityMetrics>,
         throughput_calculator: Arc<ConsensusThroughputCalculator>,
+        auto_execution_store: Arc<AutoExecutionStore>,
     ) -> Self {
         // Recover last_consensus_stats so it is consistent across validators.
         let mut last_consensus_stats = epoch_store
@@ -174,6 +184,7 @@ impl<C> ConsensusHandler<C> {
             processed_cache: LruCache::new(NonZeroUsize::new(PROCESSED_CACHE_CAP).unwrap()),
             transaction_manager_sender,
             throughput_calculator,
+            auto_execution_store,
         }
     }
 
@@ -229,10 +240,31 @@ impl<C: CheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
             timestamp
         };
 
+        let not_beofore = consensus_commit.last_commit_timestamp_ms();
+
         info!(
             %consensus_commit,
             epoch = ?self.epoch_store.epoch(),
             "Received consensus output"
+        );
+
+        self.auto_execution_store
+            .query_transactions(not_beofore, timestamp)
+            .expect("Unrecoverable error in consensus handler")
+            .into_iter()
+            .for_each(|tx| {
+                transactions.push((
+                    SequencedConsensusTransactionKind::Internal(tx),
+                    leader_author,
+                ));
+            });
+
+        info!(
+            %consensus_commit,
+            epoch = ?self.epoch_store.epoch(),
+            "This commit handle range: ({}, {}]",
+            not_beofore,
+            timestamp,
         );
 
         let execution_index = ExecutionIndices {
@@ -574,6 +606,7 @@ pub struct SequencedConsensusTransaction {
 #[derive(Debug, Clone)]
 pub enum SequencedConsensusTransactionKind {
     External(ConsensusTransaction),
+    Internal(AutoExecutableTransaction),
     System(VerifiedExecutableTransaction),
 }
 
@@ -598,6 +631,7 @@ impl<'de> Deserialize<'de> for SequencedConsensusTransactionKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 enum SerializableSequencedConsensusTransactionKind {
     External(ConsensusTransaction),
+    Internal(AutoExecutableTransaction),
     System(TrustedExecutableTransaction),
 }
 
@@ -609,6 +643,9 @@ impl From<&SequencedConsensusTransactionKind> for SerializableSequencedConsensus
             }
             SequencedConsensusTransactionKind::System(txn) => {
                 SerializableSequencedConsensusTransactionKind::System(txn.clone().serializable())
+            }
+            SequencedConsensusTransactionKind::Internal(txn) => {
+                SerializableSequencedConsensusTransactionKind::Internal(txn.clone())
             }
         }
     }
@@ -623,6 +660,9 @@ impl From<SerializableSequencedConsensusTransactionKind> for SequencedConsensusT
             SerializableSequencedConsensusTransactionKind::System(txn) => {
                 SequencedConsensusTransactionKind::System(txn.into())
             }
+            SerializableSequencedConsensusTransactionKind::Internal(txn) => {
+                SequencedConsensusTransactionKind::Internal(txn)
+            }
         }
     }
 }
@@ -630,6 +670,7 @@ impl From<SerializableSequencedConsensusTransactionKind> for SequencedConsensusT
 #[derive(Serialize, Deserialize, Clone, Hash, PartialEq, Eq, Debug, Ord, PartialOrd)]
 pub enum SequencedConsensusTransactionKey {
     External(ConsensusTransactionKey),
+    Internal(TransactionDigest),
     System(TransactionDigest),
 }
 
@@ -642,12 +683,16 @@ impl SequencedConsensusTransactionKind {
             SequencedConsensusTransactionKind::System(txn) => {
                 SequencedConsensusTransactionKey::System(*txn.digest())
             }
+            SequencedConsensusTransactionKind::Internal(txn) => {
+                SequencedConsensusTransactionKey::Internal(txn.digest())
+            }
         }
     }
 
     pub fn get_tracking_id(&self) -> u64 {
         match self {
             SequencedConsensusTransactionKind::External(ext) => ext.get_tracking_id(),
+            SequencedConsensusTransactionKind::Internal(_) => 0,
             SequencedConsensusTransactionKind::System(_txn) => 0,
         }
     }
@@ -655,6 +700,7 @@ impl SequencedConsensusTransactionKind {
     pub fn is_executable_transaction(&self) -> bool {
         match self {
             SequencedConsensusTransactionKind::External(ext) => ext.is_executable_transaction(),
+            SequencedConsensusTransactionKind::Internal(_) => true,
             SequencedConsensusTransactionKind::System(_) => true,
         }
     }
@@ -667,6 +713,7 @@ impl SequencedConsensusTransactionKind {
                 _ => None,
             },
             SequencedConsensusTransactionKind::System(txn) => Some(*txn.digest()),
+            SequencedConsensusTransactionKind::Internal(txn) => Some(txn.digest()),
         }
     }
 
@@ -675,6 +722,7 @@ impl SequencedConsensusTransactionKind {
             SequencedConsensusTransactionKind::External(ext) => {
                 matches!(ext.kind, ConsensusTransactionKind::EndOfPublish(..))
             }
+            SequencedConsensusTransactionKind::Internal(_) => false,
             SequencedConsensusTransactionKind::System(_) => false,
         }
     }
@@ -988,6 +1036,7 @@ mod tests {
             authority_per_epoch_store::ConsensusStatsAPI,
             test_authority_builder::TestAuthorityBuilder,
         },
+        auto_execution::AutoExecutionStore,
         checkpoints::CheckpointServiceNoop,
         consensus_adapter::consensus_tests::{
             test_certificates_with_gas_objects, test_user_transaction,
@@ -997,6 +1046,7 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_consensus_commit_handler() {
+        let auto_execution_store = AutoExecutionStore::new_for_test();
         // GIVEN
         // 1 account keypair
         let (sender, keypair) = deterministic_random_account_key();
@@ -1043,6 +1093,7 @@ mod tests {
             consensus_committee.clone(),
             metrics,
             Arc::new(throughput_calculator),
+            auto_execution_store,
         );
 
         // AND create test user transactions alternating between owned and shared input.
@@ -1394,6 +1445,7 @@ mod tests {
                 }
                 _ => unreachable!(),
             },
+            SequencedConsensusTransactionKind::Internal(_) => unreachable!(),
             SequencedConsensusTransactionKind::System(_) => unreachable!(),
         }
     }

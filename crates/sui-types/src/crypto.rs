@@ -1456,6 +1456,7 @@ mod bcs_signable {
     impl BcsSignable for crate::transaction::TransactionData {}
     impl BcsSignable for crate::transaction::SenderSignedData {}
     impl BcsSignable for crate::object::ObjectInner {}
+    impl BcsSignable for crate::auto_executable_transaction::AutoExecutableTransaction {}
 
     impl BcsSignable for crate::accumulator::Accumulator {}
 

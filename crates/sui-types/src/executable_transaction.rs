@@ -1,7 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
-
+use crate::auto_executable_transaction::AutoExecutableTransaction;
+use crate::event::EventID;
 use crate::messages_checkpoint::CheckpointSequenceNumber;
+use crate::object_authenticator::ObjectAuthenticator;
+use crate::signature::GenericSignature;
 use crate::{committee::EpochId, crypto::AuthorityStrongQuorumSignInfo};
 
 use crate::message_envelope::{Envelope, TrustedEnvelope, VerifiedEnvelope};
@@ -25,6 +28,8 @@ pub enum CertificateProof {
     SystemTransaction(EpochId),
     /// Validity was proven through voting in consensus.
     Consensus(EpochId),
+    /// Validity was proven through Event.
+    Event(EpochId, EventID),
 }
 
 impl CertificateProof {
@@ -49,7 +54,8 @@ impl CertificateProof {
             Self::Checkpoint(epoch, _)
             | Self::QuorumExecuted(epoch)
             | Self::SystemTransaction(epoch)
-            | Self::Consensus(epoch) => *epoch,
+            | Self::Consensus(epoch)
+            | Self::Event(epoch, _) => *epoch,
             Self::Certified(sig) => sig.epoch,
         }
     }
@@ -66,5 +72,18 @@ pub type TrustedExecutableTransaction = TrustedEnvelope<SenderSignedData, Certif
 impl VerifiedExecutableTransaction {
     pub fn gas_budget(&self) -> u64 {
         self.data().transaction_data().gas_budget()
+    }
+
+    // Create verrified executable transaction from an auto executable transaction
+    pub fn from_auto_executable_transaction(tx: &AutoExecutableTransaction, id: EpochId) -> Self {
+        VerifiedEnvelope::new_from_verified(Envelope::new_from_data_and_sig(
+            SenderSignedData::new(
+                tx.transaction().clone(),
+                vec![GenericSignature::ObjectAuthenticator(
+                    ObjectAuthenticator::new(tx.caller().clone()),
+                )],
+            ),
+            CertificateProof::Event(id, tx.event_id().clone()),
+        ))
     }
 }

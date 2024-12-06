@@ -26,6 +26,9 @@ pub(crate) trait ConsensusCommitAPI: Display {
     /// Returns epoch UNIX timestamp in milliseconds
     fn commit_timestamp_ms(&self) -> u64;
 
+    /// Returns epoch UNIX timestamp in milliseconds for the last commit in consensus.
+    fn last_commit_timestamp_ms(&self) -> u64;
+
     /// Returns a unique global index for each committed sub-dag.
     fn commit_sub_dag_index(&self) -> u64;
 
@@ -61,6 +64,10 @@ impl ConsensusCommitAPI for consensus_core::CommittedSubDag {
     fn commit_timestamp_ms(&self) -> u64 {
         // TODO: Enforce ordered timestamp in Mysticeti.
         self.timestamp_ms
+    }
+
+    fn last_commit_timestamp_ms(&self) -> u64 {
+        self.previous_timestamp_ms
     }
 
     fn commit_sub_dag_index(&self) -> u64 {

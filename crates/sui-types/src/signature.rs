@@ -8,6 +8,7 @@ use crate::crypto::{
 use crate::digests::ZKLoginInputsDigest;
 use crate::error::SuiError;
 use crate::multisig_legacy::MultiSigLegacy;
+use crate::object_authenticator::ObjectAuthenticator;
 use crate::passkey_authenticator::PasskeyAuthenticator;
 use crate::signature_verification::VerifiedDigestCache;
 use crate::zk_login_authenticator::ZkLoginAuthenticator;
@@ -91,6 +92,7 @@ pub enum GenericSignature {
     Signature,
     ZkLoginAuthenticator,
     PasskeyAuthenticator,
+    ObjectAuthenticator,
 }
 
 impl GenericSignature {
@@ -253,6 +255,7 @@ impl AsRef<[u8]> for GenericSignature {
             GenericSignature::Signature(s) => s.as_ref(),
             GenericSignature::ZkLoginAuthenticator(s) => s.as_ref(),
             GenericSignature::PasskeyAuthenticator(s) => s.as_ref(),
+            GenericSignature::ObjectAuthenticator(s) => s.as_ref(),
         }
     }
 }
