@@ -8,7 +8,6 @@ pub mod authority;
 pub mod authority_aggregator;
 pub mod authority_client;
 pub mod authority_server;
-pub mod auto_execution;
 pub mod checkpoints;
 pub mod consensus_adapter;
 pub mod consensus_handler;

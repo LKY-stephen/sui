@@ -16,6 +16,7 @@ use crate::authority::epoch_start_configuration::{EpochFlag, EpochStartConfigura
 use crate::rest_index::RestIndexStore;
 use crate::state_accumulator::AccumulatorStore;
 use crate::transaction_outputs::TransactionOutputs;
+use authority_store_types::StoreData;
 use either::Either;
 use fastcrypto::hash::{HashFunction, MultisetHash, Sha3_256};
 use futures::stream::FuturesUnordered;
@@ -52,6 +53,7 @@ use sui_types::gas_coin::TOTAL_SUPPLY_MIST;
 use typed_store::rocks::util::is_ref_count_value;
 
 const NUM_SHARDS: usize = 4096;
+pub type TriggerTime = u64;
 
 struct AuthorityStoreMetrics {
     sui_conservation_check_latency: IntGauge,
@@ -1832,6 +1834,28 @@ impl AuthorityStore {
         )?;
         wb.write()?;
         Ok(())
+    }
+
+    // only called when initiate the authority store, therefore, every object should be at latest version.
+    pub fn get_auto_execution_objects(&self) -> Vec<(TriggerTime, ObjectID)> {
+        self.perpetual_tables
+            .objects
+            .unbounded_iter()
+            .filter_map(|(key, value)| match value {
+                // TODO: Add logic for autonomous execution object
+                StoreObjectWrapper::V1(StoreObject::Value(obj)) => {
+                    if let StoreData::Move(move_obj) = obj.data {
+                        if move_obj.is_auto_tx() {
+                            return Some((0, key.0));
+                        }
+                    }
+
+                    None
+                }
+                _ => None,
+            })
+            .sorted_by(|a, b| a.0.cmp(&(b.0)))
+            .collect()
     }
 
     #[cfg(msim)]

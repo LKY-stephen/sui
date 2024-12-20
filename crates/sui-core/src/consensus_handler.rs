@@ -44,7 +44,6 @@ use crate::{
         epoch_start_configuration::EpochStartConfigTrait,
         AuthorityMetrics, AuthorityState,
     },
-    auto_execution::AutoExecutionStore,
     checkpoints::{CheckpointService, CheckpointServiceNotify},
     consensus_throughput_calculator::ConsensusThroughputCalculator,
     consensus_types::consensus_output_api::{parse_block_transactions, ConsensusCommitAPI},
@@ -59,7 +58,6 @@ pub struct ConsensusHandlerInitializer {
     epoch_store: Arc<AuthorityPerEpochStore>,
     low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
     throughput_calculator: Arc<ConsensusThroughputCalculator>,
-    auto_execution_store: Arc<AutoExecutionStore>,
 }
 
 impl ConsensusHandlerInitializer {
@@ -69,7 +67,6 @@ impl ConsensusHandlerInitializer {
         epoch_store: Arc<AuthorityPerEpochStore>,
         low_scoring_authorities: Arc<ArcSwap<HashMap<AuthorityName, u64>>>,
         throughput_calculator: Arc<ConsensusThroughputCalculator>,
-        auto_execution_store: Arc<AutoExecutionStore>,
     ) -> Self {
         Self {
             state,
@@ -77,7 +74,6 @@ impl ConsensusHandlerInitializer {
             epoch_store,
             low_scoring_authorities,
             throughput_calculator,
-            auto_execution_store,
         }
     }
 
@@ -95,7 +91,6 @@ impl ConsensusHandlerInitializer {
                 None,
                 state.metrics.clone(),
             )),
-            auto_execution_store: AutoExecutionStore::new_for_test(),
         }
     }
 
@@ -112,7 +107,6 @@ impl ConsensusHandlerInitializer {
             consensus_committee,
             self.state.metrics.clone(),
             self.throughput_calculator.clone(),
-            self.auto_execution_store.clone(),
         )
     }
 
@@ -145,8 +139,6 @@ pub struct ConsensusHandler<C> {
     transaction_manager_sender: TransactionManagerSender,
     /// Using the throughput calculator to record the current consensus throughput
     throughput_calculator: Arc<ConsensusThroughputCalculator>,
-    /// Store for auto-execution transactions
-    auto_execution_store: Arc<AutoExecutionStore>,
 }
 
 const PROCESSED_CACHE_CAP: usize = 1024 * 1024;
@@ -161,7 +153,6 @@ impl<C> ConsensusHandler<C> {
         committee: ConsensusCommittee,
         metrics: Arc<AuthorityMetrics>,
         throughput_calculator: Arc<ConsensusThroughputCalculator>,
-        auto_execution_store: Arc<AutoExecutionStore>,
     ) -> Self {
         // Recover last_consensus_stats so it is consistent across validators.
         let mut last_consensus_stats = epoch_store
@@ -184,7 +175,6 @@ impl<C> ConsensusHandler<C> {
             processed_cache: LruCache::new(NonZeroUsize::new(PROCESSED_CACHE_CAP).unwrap()),
             transaction_manager_sender,
             throughput_calculator,
-            auto_execution_store,
         }
     }
 
@@ -247,17 +237,6 @@ impl<C: CheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
             epoch = ?self.epoch_store.epoch(),
             "Received consensus output"
         );
-
-        self.auto_execution_store
-            .query_transactions(not_beofore, timestamp)
-            .expect("Unrecoverable error in consensus handler")
-            .into_iter()
-            .for_each(|tx| {
-                transactions.push((
-                    SequencedConsensusTransactionKind::Internal(tx),
-                    leader_author,
-                ));
-            });
 
         info!(
             %consensus_commit,
@@ -393,7 +372,20 @@ impl<C: CheckpointServiceNotify + Send + Sync> ConsensusHandler<C> {
             // entries while we're iterating over the sequenced transactions.
             let mut processed_set = HashSet::new();
 
-            for (seq, (transaction, cert_origin)) in transactions.into_iter().enumerate() {
+            for (seq, (transaction, cert_origin)) in transactions
+                .into_iter()
+                .chain(
+                    // get auto execution transactions
+                    self.epoch_store
+                        .get_auto_exection_transactions(
+                            consensus_commit.last_commit_timestamp_ms(),
+                            consensus_commit.commit_timestamp_ms(),
+                        )
+                        .into_iter()
+                        .map(|tx| (tx, 0)),
+                )
+                .enumerate()
+            {
                 // In process_consensus_transactions_and_commit_boundary(), we will add a system consensus commit
                 // prologue transaction, which will be the first transaction in this consensus commit batch.
                 // Therefore, the transaction sequence number starts from 1 here.
@@ -767,6 +759,7 @@ impl SequencedConsensusTransaction {
                 kind: ConsensusTransactionKind::UserTransaction(txn),
                 ..
             }) => txn.transaction_data().uses_randomness(),
+            SequencedConsensusTransactionKind::Internal(txn) => txn.transaction().uses_randomness(),
             _ => false,
         }
     }
@@ -813,6 +806,7 @@ impl SequencedConsensusTransaction {
 /// Represents the information from the current consensus commit.
 pub struct ConsensusCommitInfo {
     pub round: u64,
+    pub last_round_time: u64,
     pub timestamp: u64,
     pub consensus_commit_digest: ConsensusCommitDigest,
 
@@ -824,6 +818,7 @@ impl ConsensusCommitInfo {
     fn new(protocol_config: &ProtocolConfig, consensus_commit: &impl ConsensusCommitAPI) -> Self {
         Self {
             round: consensus_commit.leader_round(),
+            last_round_time: consensus_commit.last_commit_timestamp_ms(),
             timestamp: consensus_commit.commit_timestamp_ms(),
             consensus_commit_digest: consensus_commit.consensus_digest(protocol_config),
 
@@ -835,11 +830,13 @@ impl ConsensusCommitInfo {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn new_for_test(
         commit_round: u64,
+        last_commit_timestamp: u64,
         commit_timestamp: u64,
         skip_consensus_commit_prologue_in_test: bool,
     ) -> Self {
         Self {
             round: commit_round,
+            last_round_time: last_commit_timestamp,
             timestamp: commit_timestamp,
             consensus_commit_digest: ConsensusCommitDigest::default(),
             skip_consensus_commit_prologue_in_test,
@@ -1036,7 +1033,6 @@ mod tests {
             authority_per_epoch_store::ConsensusStatsAPI,
             test_authority_builder::TestAuthorityBuilder,
         },
-        auto_execution::AutoExecutionStore,
         checkpoints::CheckpointServiceNoop,
         consensus_adapter::consensus_tests::{
             test_certificates_with_gas_objects, test_user_transaction,
@@ -1046,7 +1042,6 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_consensus_commit_handler() {
-        let auto_execution_store = AutoExecutionStore::new_for_test();
         // GIVEN
         // 1 account keypair
         let (sender, keypair) = deterministic_random_account_key();
@@ -1093,7 +1088,6 @@ mod tests {
             consensus_committee.clone(),
             metrics,
             Arc::new(throughput_calculator),
-            auto_execution_store,
         );
 
         // AND create test user transactions alternating between owned and shared input.

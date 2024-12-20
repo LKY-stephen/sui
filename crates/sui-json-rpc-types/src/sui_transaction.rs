@@ -409,6 +409,9 @@ pub enum SuiTransactionBlockKind {
     ConsensusCommitPrologueV2(SuiConsensusCommitPrologueV2),
     ConsensusCommitPrologueV3(SuiConsensusCommitPrologueV3),
     // .. more transaction types go here
+    /// A series of transactions where the results of one transaction can be used in future
+    /// transactions
+    AutonomousExecution(SuiProgrammableTransactionBlock),
 }
 
 impl Display for SuiTransactionBlockKind {
@@ -463,6 +466,10 @@ impl Display for SuiTransactionBlockKind {
             Self::EndOfEpochTransaction(_) => {
                 writeln!(writer, "Transaction Kind: End of Epoch Transaction")?;
             }
+            Self::AutonomousExecution(p) => {
+                write!(writer, "Transaction Kind: Autonomous Execution")?;
+                write!(writer, "{}", crate::displays::Pretty(p))?;
+            }
         }
         write!(f, "{}", writer)
     }
@@ -502,6 +509,9 @@ impl SuiTransactionBlockKind {
                 })
             }
             TransactionKind::ProgrammableTransaction(p) => Self::ProgrammableTransaction(
+                SuiProgrammableTransactionBlock::try_from(p, module_cache)?,
+            ),
+            TransactionKind::AutonomousExecution(p) => Self::AutonomousExecution(
                 SuiProgrammableTransactionBlock::try_from(p, module_cache)?,
             ),
             TransactionKind::AuthenticatorStateUpdate(update) => {
@@ -605,6 +615,14 @@ impl SuiTransactionBlockKind {
                 )
                 .await?,
             ),
+
+            TransactionKind::AutonomousExecution(p) => Self::AutonomousExecution(
+                SuiProgrammableTransactionBlock::try_from_with_package_resolver(
+                    p,
+                    package_resolver,
+                )
+                .await?,
+            ),
             TransactionKind::AuthenticatorStateUpdate(update) => {
                 Self::AuthenticatorStateUpdate(SuiAuthenticatorStateUpdate {
                     epoch: update.epoch,
@@ -680,6 +698,7 @@ impl SuiTransactionBlockKind {
             Self::AuthenticatorStateUpdate(_) => "AuthenticatorStateUpdate",
             Self::RandomnessStateUpdate(_) => "RandomnessStateUpdate",
             Self::EndOfEpochTransaction(_) => "EndOfEpochTransaction",
+            Self::AutonomousExecution(_) => "AutonomousExecution",
         }
     }
 }

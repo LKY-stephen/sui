@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::auto_executable_transaction::AutoExecutableTransaction;
-use crate::event::EventID;
+use crate::base_types::ObjectID;
 use crate::messages_checkpoint::CheckpointSequenceNumber;
 use crate::object_authenticator::ObjectAuthenticator;
 use crate::signature::GenericSignature;
@@ -29,7 +29,7 @@ pub enum CertificateProof {
     /// Validity was proven through voting in consensus.
     Consensus(EpochId),
     /// Validity was proven through Event.
-    Event(EpochId, EventID),
+    Object(EpochId, ObjectID),
 }
 
 impl CertificateProof {
@@ -55,7 +55,7 @@ impl CertificateProof {
             | Self::QuorumExecuted(epoch)
             | Self::SystemTransaction(epoch)
             | Self::Consensus(epoch)
-            | Self::Event(epoch, _) => *epoch,
+            | Self::Object(epoch, _) => *epoch,
             Self::Certified(sig) => sig.epoch,
         }
     }
@@ -80,10 +80,10 @@ impl VerifiedExecutableTransaction {
             SenderSignedData::new(
                 tx.transaction().clone(),
                 vec![GenericSignature::ObjectAuthenticator(
-                    ObjectAuthenticator::new(tx.caller().clone()),
+                    ObjectAuthenticator::new(tx.object_id()),
                 )],
             ),
-            CertificateProof::Event(id, tx.event_id().clone()),
+            CertificateProof::Object(id, tx.object_id()),
         ))
     }
 }

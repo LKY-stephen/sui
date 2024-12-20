@@ -306,6 +306,8 @@ pub enum TransactionKind {
     ConsensusCommitPrologueV2(ConsensusCommitPrologueV2),
 
     ConsensusCommitPrologueV3(ConsensusCommitPrologueV3),
+    /// A transaction that allows the interleaving of native commands and Move calls
+    AutonomousExecution(ProgrammableTransaction),
     // .. more transaction types go here
 }
 
@@ -1208,7 +1210,8 @@ impl TransactionKind {
             | TransactionKind::ConsensusCommitPrologueV3(_)
             | TransactionKind::AuthenticatorStateUpdate(_)
             | TransactionKind::RandomnessStateUpdate(_)
-            | TransactionKind::EndOfEpochTransaction(_) => true,
+            | TransactionKind::EndOfEpochTransaction(_)
+            | TransactionKind::AutonomousExecution(_) => true,
             TransactionKind::ProgrammableTransaction(_) => false,
         }
     }
@@ -1303,7 +1306,8 @@ impl TransactionKind {
             | TransactionKind::AuthenticatorStateUpdate(_)
             | TransactionKind::RandomnessStateUpdate(_)
             | TransactionKind::EndOfEpochTransaction(_) => vec![],
-            TransactionKind::ProgrammableTransaction(pt) => pt.receiving_objects(),
+            TransactionKind::ProgrammableTransaction(pt)
+            | TransactionKind::AutonomousExecution(pt) => pt.receiving_objects(),
         }
     }
 
@@ -1360,7 +1364,9 @@ impl TransactionKind {
                 }
                 after_dedup
             }
-            Self::ProgrammableTransaction(p) => return p.input_objects(),
+            Self::ProgrammableTransaction(p) | Self::AutonomousExecution(p) => {
+                return p.input_objects()
+            }
         };
         // Ensure that there are no duplicate inputs. This cannot be removed because:
         // In [`AuthorityState::check_locks`], we check that there are no duplicate mutable
@@ -1378,7 +1384,8 @@ impl TransactionKind {
 
     pub fn validity_check(&self, config: &ProtocolConfig) -> UserInputResult {
         match self {
-            TransactionKind::ProgrammableTransaction(p) => p.validity_check(config)?,
+            TransactionKind::ProgrammableTransaction(p)
+            | TransactionKind::AutonomousExecution(p) => p.validity_check(config)?,
             // All transactiond kinds below are assumed to be system,
             // and no validity or limit checks are performed.
             TransactionKind::ChangeEpoch(_)
@@ -1462,6 +1469,7 @@ impl TransactionKind {
             Self::AuthenticatorStateUpdate(_) => "AuthenticatorStateUpdate",
             Self::RandomnessStateUpdate(_) => "RandomnessStateUpdate",
             Self::EndOfEpochTransaction(_) => "EndOfEpochTransaction",
+            Self::AutonomousExecution(_) => "AutonomousExecution",
         }
     }
 }
@@ -1502,6 +1510,10 @@ impl Display for TransactionKind {
             }
             Self::ProgrammableTransaction(p) => {
                 writeln!(writer, "Transaction Kind : Programmable")?;
+                write!(writer, "{p}")?;
+            }
+            Self::AutonomousExecution(p) => {
+                writeln!(writer, "Transaction Kind : Autonomous Execution")?;
                 write!(writer, "{p}")?;
             }
             Self::AuthenticatorStateUpdate(_) => {

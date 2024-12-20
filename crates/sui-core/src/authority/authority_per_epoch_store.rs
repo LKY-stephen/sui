@@ -31,8 +31,9 @@ use sui_types::crypto::{
 };
 use sui_types::digests::{ChainIdentifier, TransactionEffectsDigest};
 use sui_types::error::{SuiError, SuiResult};
+use sui_types::object::{Object, OBJECT_START_VERSION};
 use sui_types::signature::GenericSignature;
-use sui_types::storage::{BackingPackageStore, InputKey, ObjectStore};
+use sui_types::storage::{BackingPackageStore, InputKey, ObjectKey, ObjectStore};
 use sui_types::transaction::{
     AuthenticatorStateUpdate, CertifiedTransaction, InputObjectKind, SenderSignedData, Transaction,
     TransactionDataAPI, TransactionKey, TransactionKind, VerifiedCertificate,
@@ -48,7 +49,9 @@ use typed_store::{
     TypedStoreError,
 };
 
+use super::authority_store::TriggerTime;
 use super::authority_store_tables::ENV_VAR_LOCKS_BLOCK_CACHE_SIZE;
+use super::autonomous_execution_store::AutoExecutionStore;
 use super::epoch_start_configuration::EpochStartConfigTrait;
 use super::shared_object_congestion_tracker::{
     CongestionPerObjectDebt, SharedObjectCongestionTracker,
@@ -61,6 +64,7 @@ use crate::checkpoints::{
     BuilderCheckpointSummary, CheckpointHeight, CheckpointServiceNotify, EpochStats,
     PendingCheckpoint, PendingCheckpointInfo, PendingCheckpointV2, PendingCheckpointV2Contents,
 };
+use sui_types::auto_executable_transaction::AutoTx;
 
 use crate::authority::shared_object_version_manager::{
     AssignedTxAndVersions, ConsensusSharedObjVerAssignment, SharedObjVerManager,
@@ -384,6 +388,9 @@ pub struct AuthorityPerEpochStore {
     /// State machine managing randomness DKG and generation.
     randomness_manager: OnceCell<tokio::sync::Mutex<RandomnessManager>>,
     randomness_reporter: OnceCell<RandomnessReporter>,
+
+    // Cache for auto-executable transactions
+    autonomous_execution_store: Arc<AutoExecutionStore>,
 }
 
 /// AuthorityEpochTables contains tables that contain data that is only valid within an epoch.
@@ -852,6 +859,7 @@ impl AuthorityPerEpochStore {
         signature_verifier_metrics: Arc<SignatureVerifierMetrics>,
         expensive_safety_check_config: &ExpensiveSafetyCheckConfig,
         chain_identifier: ChainIdentifier,
+        autonomous_execution_store: Arc<AutoExecutionStore>,
     ) -> Arc<Self> {
         let current_time = Instant::now();
         let epoch_id = committee.epoch;
@@ -983,6 +991,7 @@ impl AuthorityPerEpochStore {
             jwk_aggregator,
             randomness_manager: OnceCell::new(),
             randomness_reporter: OnceCell::new(),
+            autonomous_execution_store,
         });
 
         s.update_buffer_stake_metric();
@@ -1050,6 +1059,43 @@ impl AuthorityPerEpochStore {
             error!("BUG: `set_randomness_manager` called more than once; this should never happen");
         }
         result
+    }
+
+    pub fn get_auto_exection_transactions(
+        &self,
+        from: TriggerTime,
+        to: TriggerTime,
+    ) -> Vec<SequencedConsensusTransactionKind> {
+        let price = self.reference_gas_price();
+        self.autonomous_execution_store
+            .get_till(from, to, price)
+            .expect("should be a list")
+            .into_iter()
+            .map(|tx| SequencedConsensusTransactionKind::Internal(tx))
+            .collect()
+    }
+
+    pub fn update_auto_execution_store(
+        &self,
+        to_modify: &BTreeMap<ObjectID, Object>,
+        to_delete: &Vec<ObjectKey>,
+    ) {
+        let mut to_add = vec![];
+        let mut to_update = vec![];
+        to_modify.iter().for_each(|(id, obj)| {
+            if let Some(auto_tx) = AutoTx::try_from_object(obj) {
+                if obj.version() == OBJECT_START_VERSION {
+                    to_add.push((auto_tx.trigger_time(), id.to_owned()));
+                } else {
+                    to_update.push((auto_tx.trigger_time(), id.to_owned()));
+                }
+            }
+        });
+        self.autonomous_execution_store.update(
+            to_add,
+            to_update,
+            to_delete.into_iter().map(|key| key.0).collect(),
+        );
     }
 
     pub fn coin_deny_list_state_exists(&self) -> bool {
@@ -1133,6 +1179,7 @@ impl AuthorityPerEpochStore {
             self.signature_verifier.metrics.clone(),
             expensive_safety_check_config,
             chain_identifier,
+            self.autonomous_execution_store.clone(),
         )
     }
 
@@ -3154,6 +3201,7 @@ impl AuthorityPerEpochStore {
                 } else {
                     self.get_highest_pending_checkpoint_height() + 1
                 },
+                0,
                 0,
                 skip_consensus_commit_prologue_in_test,
             ),

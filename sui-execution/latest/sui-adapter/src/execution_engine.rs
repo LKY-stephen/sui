@@ -636,6 +636,17 @@ mod checked {
                     pt,
                 )
             }
+            TransactionKind::AutonomousExecution(pt) => {
+                programmable_transactions::execution::execute::<Mode>(
+                    protocol_config,
+                    metrics,
+                    move_vm,
+                    temporary_store,
+                    tx_ctx,
+                    gas_charger,
+                    pt,
+                )
+            }
             TransactionKind::EndOfEpochTransaction(txns) => {
                 let mut builder = ProgrammableTransactionBuilder::new();
                 let len = txns.len();

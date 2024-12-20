@@ -220,6 +220,10 @@ impl MoveObject {
         self.type_.is_staked_sui()
     }
 
+    pub fn is_auto_tx(&self) -> bool {
+        self.type_.is_auto_tx()
+    }
+
     pub fn is_clock(&self) -> bool {
         self.type_.is(&crate::clock::Clock::type_())
     }

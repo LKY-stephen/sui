@@ -42,6 +42,7 @@ use sui_types::sui_system_state::SuiSystemStateTrait;
 use sui_types::supported_protocol_versions::SupportedProtocolVersions;
 use sui_types::transaction::VerifiedTransaction;
 
+use super::autonomous_execution_store::AutoExecutionStore;
 use super::epoch_start_configuration::EpochFlag;
 
 #[derive(Default, Clone)]
@@ -231,7 +232,10 @@ impl<'a> TestAuthorityBuilder<'a> {
 
         let cache_traits =
             build_execution_cache(&epoch_start_configuration, &registry, &authority_store);
-
+        let autonomous_execution_store = Arc::new(AutoExecutionStore::new(
+            authority_store.get_auto_execution_objects(),
+            cache_traits.object_cache_reader.clone(),
+        ));
         let epoch_store = AuthorityPerEpochStore::new(
             name,
             Arc::new(genesis_committee.clone()),
@@ -245,6 +249,7 @@ impl<'a> TestAuthorityBuilder<'a> {
             signature_verifier_metrics,
             &expensive_safety_checks,
             ChainIdentifier::from(*genesis.checkpoint().digest()),
+            autonomous_execution_store,
         );
         let committee_store = Arc::new(CommitteeStore::new(
             path.join("epochs"),

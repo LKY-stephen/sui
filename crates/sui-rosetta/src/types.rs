@@ -480,7 +480,8 @@ impl From<&SuiTransactionBlockKind> for OperationType {
             | SuiTransactionBlockKind::ConsensusCommitPrologueV3(_) => {
                 OperationType::ConsensusCommitPrologue
             }
-            SuiTransactionBlockKind::ProgrammableTransaction(_) => {
+            SuiTransactionBlockKind::ProgrammableTransaction(_)
+            | SuiTransactionBlockKind::AutonomousExecution(_) => {
                 OperationType::ProgrammableTransaction
             }
             SuiTransactionBlockKind::AuthenticatorStateUpdate(_) => {

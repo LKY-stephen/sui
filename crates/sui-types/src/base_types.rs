@@ -2,6 +2,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::auto_executable_transaction::AutoTx;
+use crate::auto_executable_transaction::AUTO_EXECUTION_MODULE_NAME;
+use crate::auto_executable_transaction::AUTO_EXECUTION_STRUCT_NAME;
+use crate::auto_executable_transaction::AUTO_EXECUTION_TYPE_PARAMS;
 use crate::coin::Coin;
 use crate::coin::CoinMetadata;
 use crate::coin::TreasuryCap;
@@ -40,6 +44,7 @@ use crate::MOVE_STDLIB_ADDRESS;
 use crate::SUI_CLOCK_OBJECT_ID;
 use crate::SUI_FRAMEWORK_ADDRESS;
 use crate::SUI_SYSTEM_ADDRESS;
+use crate::TALUS_FRAMEWORK_ADDRESS;
 use anyhow::anyhow;
 use fastcrypto::encoding::decode_bytes_hex;
 use fastcrypto::encoding::{Encoding, Hex};
@@ -176,6 +181,8 @@ pub enum MoveObjectType_ {
     StakedSui,
     /// A non-SUI coin type (i.e., `0x2::coin::Coin<T> where T != 0x2::sui::SUI`)
     Coin(TypeTag),
+    // A auto executable transaction
+    AutoTx,
     // NOTE: if adding a new type here, and there are existing on-chain objects of that
     // type with Other(_), that is ok, but you must hand-roll PartialEq/Eq/Ord/maybe Hash
     // to make sure the new type and Other(_) are interpreted consistently.
@@ -194,6 +201,7 @@ impl MoveObjectType {
         match &self.0 {
             MoveObjectType_::GasCoin | MoveObjectType_::Coin(_) => SUI_FRAMEWORK_ADDRESS,
             MoveObjectType_::StakedSui => SUI_SYSTEM_ADDRESS,
+            MoveObjectType_::AutoTx => TALUS_FRAMEWORK_ADDRESS,
             MoveObjectType_::Other(s) => s.address,
         }
     }
@@ -202,6 +210,7 @@ impl MoveObjectType {
         match &self.0 {
             MoveObjectType_::GasCoin | MoveObjectType_::Coin(_) => COIN_MODULE_NAME,
             MoveObjectType_::StakedSui => STAKING_POOL_MODULE_NAME,
+            MoveObjectType_::AutoTx => AUTO_EXECUTION_MODULE_NAME,
             MoveObjectType_::Other(s) => &s.module,
         }
     }
@@ -210,6 +219,7 @@ impl MoveObjectType {
         match &self.0 {
             MoveObjectType_::GasCoin | MoveObjectType_::Coin(_) => COIN_STRUCT_NAME,
             MoveObjectType_::StakedSui => STAKED_SUI_STRUCT_NAME,
+            MoveObjectType_::AutoTx => AUTO_EXECUTION_STRUCT_NAME,
             MoveObjectType_::Other(s) => &s.name,
         }
     }
@@ -219,6 +229,7 @@ impl MoveObjectType {
             MoveObjectType_::GasCoin => vec![GAS::type_tag()],
             MoveObjectType_::StakedSui => vec![],
             MoveObjectType_::Coin(inner) => vec![inner.clone()],
+            MoveObjectType_::AutoTx => AUTO_EXECUTION_TYPE_PARAMS.clone(),
             MoveObjectType_::Other(s) => s.type_params.clone(),
         }
     }
@@ -227,7 +238,8 @@ impl MoveObjectType {
         match self.0 {
             MoveObjectType_::GasCoin => vec![GAS::type_tag()],
             MoveObjectType_::StakedSui => vec![],
-            MoveObjectType_::Coin(inner) => vec![inner],
+            MoveObjectType_::Coin(inner) => vec![inner.clone()],
+            MoveObjectType_::AutoTx => AUTO_EXECUTION_TYPE_PARAMS.clone(),
             MoveObjectType_::Other(s) => s.type_params,
         }
     }
@@ -236,6 +248,7 @@ impl MoveObjectType {
         match &self.0 {
             MoveObjectType_::GasCoin => Some(GAS::type_tag()),
             MoveObjectType_::Coin(inner) => Some(inner.clone()),
+            MoveObjectType_::AutoTx => None,
             MoveObjectType_::StakedSui => None,
             MoveObjectType_::Other(_) => None,
         }
@@ -251,6 +264,7 @@ impl MoveObjectType {
             MoveObjectType_::GasCoin => 1,
             MoveObjectType_::StakedSui => 1,
             MoveObjectType_::Coin(inner) => bcs::serialized_size(inner).unwrap() + 1,
+            MoveObjectType_::AutoTx => bcs::serialized_size(&AutoTx::struct_tag()).unwrap() + 1,
             MoveObjectType_::Other(s) => bcs::serialized_size(s).unwrap() + 1,
         }
     }
@@ -259,7 +273,9 @@ impl MoveObjectType {
     pub fn is_coin(&self) -> bool {
         match &self.0 {
             MoveObjectType_::GasCoin | MoveObjectType_::Coin(_) => true,
-            MoveObjectType_::StakedSui | MoveObjectType_::Other(_) => false,
+            MoveObjectType_::StakedSui | MoveObjectType_::Other(_) | MoveObjectType_::AutoTx => {
+                false
+            }
         }
     }
 
@@ -267,9 +283,21 @@ impl MoveObjectType {
     pub fn is_gas_coin(&self) -> bool {
         match &self.0 {
             MoveObjectType_::GasCoin => true,
-            MoveObjectType_::StakedSui | MoveObjectType_::Coin(_) | MoveObjectType_::Other(_) => {
-                false
-            }
+            MoveObjectType_::StakedSui
+            | MoveObjectType_::Coin(_)
+            | MoveObjectType_::Other(_)
+            | MoveObjectType_::AutoTx => false,
+        }
+    }
+
+    /// Return true if `self` is 0xa070::auto_tx::AutoTx
+    pub fn is_auto_tx(&self) -> bool {
+        match &self.0 {
+            MoveObjectType_::AutoTx => true,
+            MoveObjectType_::StakedSui
+            | MoveObjectType_::Coin(_)
+            | MoveObjectType_::Other(_)
+            | MoveObjectType_::GasCoin => false,
         }
     }
 
@@ -278,33 +306,38 @@ impl MoveObjectType {
         match &self.0 {
             MoveObjectType_::GasCoin => GAS::is_gas_type(t),
             MoveObjectType_::Coin(c) => t == c,
-            MoveObjectType_::StakedSui | MoveObjectType_::Other(_) => false,
+            MoveObjectType_::StakedSui | MoveObjectType_::AutoTx | MoveObjectType_::Other(_) => {
+                false
+            }
         }
     }
 
     pub fn is_staked_sui(&self) -> bool {
         match &self.0 {
             MoveObjectType_::StakedSui => true,
-            MoveObjectType_::GasCoin | MoveObjectType_::Coin(_) | MoveObjectType_::Other(_) => {
-                false
-            }
+            MoveObjectType_::GasCoin
+            | MoveObjectType_::Coin(_)
+            | MoveObjectType_::AutoTx
+            | MoveObjectType_::Other(_) => false,
         }
     }
 
     pub fn is_coin_metadata(&self) -> bool {
         match &self.0 {
-            MoveObjectType_::GasCoin | MoveObjectType_::StakedSui | MoveObjectType_::Coin(_) => {
-                false
-            }
+            MoveObjectType_::GasCoin
+            | MoveObjectType_::StakedSui
+            | MoveObjectType_::AutoTx
+            | MoveObjectType_::Coin(_) => false,
             MoveObjectType_::Other(s) => CoinMetadata::is_coin_metadata(s),
         }
     }
 
     pub fn is_treasury_cap(&self) -> bool {
         match &self.0 {
-            MoveObjectType_::GasCoin | MoveObjectType_::StakedSui | MoveObjectType_::Coin(_) => {
-                false
-            }
+            MoveObjectType_::GasCoin
+            | MoveObjectType_::StakedSui
+            | MoveObjectType_::AutoTx
+            | MoveObjectType_::Coin(_) => false,
             MoveObjectType_::Other(s) => TreasuryCap::is_treasury_type(s),
         }
     }
@@ -335,31 +368,34 @@ impl MoveObjectType {
 
     pub fn is_dynamic_field(&self) -> bool {
         match &self.0 {
-            MoveObjectType_::GasCoin | MoveObjectType_::StakedSui | MoveObjectType_::Coin(_) => {
-                false
-            }
+            MoveObjectType_::GasCoin
+            | MoveObjectType_::StakedSui
+            | MoveObjectType_::Coin(_)
+            | MoveObjectType_::AutoTx => false,
             MoveObjectType_::Other(s) => DynamicFieldInfo::is_dynamic_field(s),
         }
     }
 
     pub fn try_extract_field_name(&self, type_: &DynamicFieldType) -> SuiResult<TypeTag> {
         match &self.0 {
-            MoveObjectType_::GasCoin | MoveObjectType_::StakedSui | MoveObjectType_::Coin(_) => {
-                Err(SuiError::ObjectDeserializationError {
-                    error: "Error extracting dynamic object name from Coin object".to_string(),
-                })
-            }
+            MoveObjectType_::GasCoin
+            | MoveObjectType_::StakedSui
+            | MoveObjectType_::Coin(_)
+            | MoveObjectType_::AutoTx => Err(SuiError::ObjectDeserializationError {
+                error: "Error extracting dynamic object name from Coin object".to_string(),
+            }),
             MoveObjectType_::Other(s) => DynamicFieldInfo::try_extract_field_name(s, type_),
         }
     }
 
     pub fn try_extract_field_value(&self) -> SuiResult<TypeTag> {
         match &self.0 {
-            MoveObjectType_::GasCoin | MoveObjectType_::StakedSui | MoveObjectType_::Coin(_) => {
-                Err(SuiError::ObjectDeserializationError {
-                    error: "Error extracting dynamic object value from Coin object".to_string(),
-                })
-            }
+            MoveObjectType_::GasCoin
+            | MoveObjectType_::StakedSui
+            | MoveObjectType_::Coin(_)
+            | MoveObjectType_::AutoTx => Err(SuiError::ObjectDeserializationError {
+                error: "Error extracting dynamic object value from Coin object".to_string(),
+            }),
             MoveObjectType_::Other(s) => DynamicFieldInfo::try_extract_field_value(s),
         }
     }
@@ -372,6 +408,7 @@ impl MoveObjectType {
                 Coin::is_coin(s) && s.type_params.len() == 1 && inner == &s.type_params[0]
             }
             MoveObjectType_::Other(o) => s == o,
+            MoveObjectType_::AutoTx => s.eq(&AutoTx::struct_tag()),
         }
     }
 
@@ -411,6 +448,7 @@ impl From<MoveObjectType> for StructTag {
             MoveObjectType_::StakedSui => StakedSui::type_(),
             MoveObjectType_::Coin(inner) => Coin::type_(inner),
             MoveObjectType_::Other(s) => s,
+            MoveObjectType_::AutoTx => AutoTx::struct_tag(),
         }
     }
 }

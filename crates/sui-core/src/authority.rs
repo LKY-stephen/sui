@@ -199,11 +199,11 @@ mod batch_verification_tests;
 #[path = "unit_tests/coin_deny_list_tests.rs"]
 mod coin_deny_list_tests;
 
-#[cfg(any(test, feature = "test-utils"))]
-pub mod authority_test_utils;
-
 pub mod authority_per_epoch_store;
 pub mod authority_per_epoch_store_pruner;
+#[cfg(any(test, feature = "test-utils"))]
+pub mod authority_test_utils;
+pub mod autonomous_execution_store;
 
 pub mod authority_store_pruner;
 pub mod authority_store_tables;
@@ -1441,7 +1441,7 @@ impl AuthorityState {
             if let Some(err) = &execution_error_opt {
                 debug_fatal!("Authenticator state update failed: {:?}", err);
             }
-            epoch_store.update_authenticator_state(auth_state);
+            epoch_store.update_authenticator_state(&auth_state);
 
             // double check that the signature verifier always matches the authenticator state
             if cfg!(debug_assertions) {
@@ -1539,9 +1539,18 @@ impl AuthorityState {
             effects.clone(),
             inner_temporary_store,
         );
+
+        // update the auto execution store
+        epoch_store.update_auto_execution_store(
+            &transaction_outputs.written,
+            &transaction_outputs.deleted,
+        );
+
         self.get_cache_writer()
             .write_transaction_outputs(epoch_store.epoch(), transaction_outputs.into())
             .await?;
+
+        // process transaction outputs to update autonomous execution store.
 
         if certificate.transaction_data().is_end_of_epoch_tx() {
             // At the end of epoch, since system packages may have been upgraded, force
