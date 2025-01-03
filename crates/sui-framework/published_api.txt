@@ -4831,3 +4831,9 @@ sqrt
 to_string
 	public fun
 	0x1::u8
+AutoTx
+	public struct
+	0xa070::auto_tx
+create_auto_tx
+	public fun
+	0xa070::auto_tx

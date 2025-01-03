@@ -41,6 +41,7 @@ fn build_system_packages() {
     let sui_system_path = packages_path.join("sui-system");
     let sui_framework_path = packages_path.join("sui-framework");
     let move_stdlib_path = packages_path.join("move-stdlib");
+    let talus_framework_path = packages_path.join("talus-framework");
 
     build_packages(
         &bridge_path,
@@ -48,6 +49,7 @@ fn build_system_packages() {
         &sui_system_path,
         &sui_framework_path,
         &move_stdlib_path,
+        &talus_framework_path,
         out_dir,
     );
 
@@ -84,6 +86,7 @@ fn build_packages(
     sui_system_path: &Path,
     sui_framework_path: &Path,
     stdlib_path: &Path,
+    talus_frameowrk_path: &Path,
     out_dir: &Path,
 ) {
     let config = MoveBuildConfig {
@@ -101,12 +104,14 @@ fn build_packages(
         sui_system_path,
         sui_framework_path,
         stdlib_path,
+        talus_frameowrk_path,
         out_dir,
         "bridge",
         "deepbook",
         "sui-system",
         "sui-framework",
         "move-stdlib",
+        "talus-framework",
         config,
     );
 }
@@ -117,12 +122,14 @@ fn build_packages_with_move_config(
     sui_system_path: &Path,
     sui_framework_path: &Path,
     stdlib_path: &Path,
+    talus_path: &Path,
     out_dir: &Path,
     bridge_dir: &str,
     deepbook_dir: &str,
     system_dir: &str,
     framework_dir: &str,
     stdlib_dir: &str,
+    talus_dir: &str,
     config: MoveBuildConfig,
 ) {
     let stdlib_pkg = BuildConfig {
@@ -149,6 +156,14 @@ fn build_packages_with_move_config(
     }
     .build(sui_system_path)
     .unwrap();
+    let talus_pkg = BuildConfig {
+        config: config.clone(),
+        run_bytecode_verifier: true,
+        print_diags_to_stderr: false,
+        chain_id: None, // Framework pkg addr is agnostic to chain, resolves from Move.toml
+    }
+    .build(talus_path)
+    .unwrap();
     let deepbook_pkg = BuildConfig {
         config: config.clone(),
         run_bytecode_verifier: true,
@@ -171,6 +186,7 @@ fn build_packages_with_move_config(
     let sui_framework = framework_pkg.get_sui_framework_modules();
     let deepbook = deepbook_pkg.get_deepbook_modules();
     let bridge = bridge_pkg.get_bridge_modules();
+    let talus = talus_pkg.get_talus_modules();
 
     let compiled_packages_dir = out_dir.join(COMPILED_PACKAGES_DIR);
 
@@ -185,6 +201,8 @@ fn build_packages_with_move_config(
         serialize_modules_to_file(bridge, &compiled_packages_dir.join(bridge_dir)).unwrap();
     let stdlib_members =
         serialize_modules_to_file(move_stdlib, &compiled_packages_dir.join(stdlib_dir)).unwrap();
+    let talus_members =
+        serialize_modules_to_file(talus, &compiled_packages_dir.join(talus_dir)).unwrap();
 
     // write out generated docs
     let docs_dir = out_dir.join(DOCS_DIR);
@@ -209,6 +227,11 @@ fn build_packages_with_move_config(
         &bridge_pkg.package.compiled_docs.unwrap(),
         &mut files_to_write,
     );
+    relocate_docs(
+        talus_dir,
+        &talus_pkg.package.compiled_docs.unwrap(),
+        &mut files_to_write,
+    );
     for (fname, doc) in files_to_write {
         let dst_path = docs_dir.join(fname);
         fs::create_dir_all(dst_path.parent().unwrap()).unwrap();
@@ -221,6 +244,7 @@ fn build_packages_with_move_config(
         deepbook_members.join("\n"),
         bridge_members.join("\n"),
         stdlib_members.join("\n"),
+        talus_members.join("\n"),
     ]
     .join("\n");
 

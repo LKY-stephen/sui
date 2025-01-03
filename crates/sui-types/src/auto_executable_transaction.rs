@@ -115,11 +115,15 @@ impl AutoTx {
     }
 
     pub fn try_from_object(obj: &Object) -> Option<Self> {
-        let move_obj = obj.data.try_as_move().expect("should be valid");
-        if !move_obj.is_auto_tx() {
-            return None;
+        if let Some(move_obj) = obj.data.try_as_move() {
+            if move_obj.is_auto_tx() {
+                return Some(
+                    AutoTx::from_bcs_bytes(move_obj.contents()).expect("Should be valid object"),
+                );
+            }
         }
-        return Some(AutoTx::from_bcs_bytes(move_obj.contents()).expect("Should be valid object"));
+
+        None
     }
 
     pub fn trigger_time(&self) -> TimestampMs {

@@ -16,6 +16,7 @@ use sui_types::{
     move_package::MovePackage,
     object::{Object, OBJECT_START_VERSION},
     MOVE_STDLIB_PACKAGE_ID, SUI_FRAMEWORK_PACKAGE_ID, SUI_SYSTEM_PACKAGE_ID,
+    TALUS_FRAMEWORK_PACKAGE_ID,
 };
 use sui_types::{BRIDGE_PACKAGE_ID, DEEPBOOK_PACKAGE_ID};
 use tracing::error;
@@ -131,6 +132,11 @@ impl BuiltInFramework {
                     SUI_FRAMEWORK_PACKAGE_ID,
                     SUI_SYSTEM_PACKAGE_ID
                 ]
+            ),
+            (
+                TALUS_FRAMEWORK_PACKAGE_ID,
+                "talus-framework",
+                [MOVE_STDLIB_PACKAGE_ID, SUI_FRAMEWORK_PACKAGE_ID]
             )
         ])
         .iter()
