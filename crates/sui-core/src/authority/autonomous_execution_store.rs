@@ -5,9 +5,11 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Bound::{Excluded, Included};
 use std::result::Result::Ok;
 use std::sync::{Arc, Mutex, RwLock};
-use sui_types::auto_executable_transaction::{AutoExecutableTransaction, AutoTx};
+use sui_types::auto_executable_transaction::{AutoExecutableTransaction, AutoTx, MoveCallArg};
 use sui_types::base_types::ObjectID;
 use sui_types::error::SuiResult;
+use sui_types::transaction::{CallArg, ObjectArg};
+use sui_types::TypeTag;
 
 pub struct AutoExecutionStore {
     clock: Arc<Mutex<TriggerTime>>,
@@ -39,7 +41,7 @@ impl AutoExecutionStore {
         &self,
         from: TriggerTime,
         to: TriggerTime,
-        price: u64,
+        gas_price: u64,
     ) -> SuiResult<Vec<AutoExecutableTransaction>> {
         let mut clock = self.clock.lock().expect("cannot lock clock");
         if to > *clock {
@@ -57,32 +59,94 @@ impl AutoExecutionStore {
             .into_iter()
             .map(|(_, ids)| {
                 ids.into_iter()
-                    .filter_map(|id| {
-                        let auto_tx = AutoTx::try_from_object(
-                            &self
-                                .cache
-                                .get_object(id)
-                                .ok()?
-                                .expect("There must be an object"),
-                        )?;
-                        let gas: sui_types::object::Object = self
-                            .cache
-                            .get_object(&auto_tx.gas_id)
-                            .expect("Should be able to read")
-                            .expect("There must be an object");
-                        if !gas.is_gas_coin() {
-                            return None;
-                        }
-                        let balance = gas.as_coin_maybe().expect("Should be a coin").value();
-                        let tx = AutoExecutableTransaction::try_from_obj(
-                            &auto_tx, &gas, balance, price,
-                        )?;
-                        return Some(tx);
-                    })
+                    .filter_map(|id| self.get_auto_tx_from_id(id, gas_price))
                     .collect::<Vec<_>>()
             })
             .flatten()
             .collect());
+    }
+
+    pub fn get_auto_tx_from_id(
+        &self,
+        id: &ObjectID,
+        gas_price: u64,
+    ) -> Option<AutoExecutableTransaction> {
+        // read auto_tx object
+        let auto_tx = AutoTx::try_from_object(
+            &self
+                .cache
+                .get_object(id)
+                .ok()?
+                .expect("Failed to read object"),
+        )?;
+
+        // read gas object
+        let gas: sui_types::object::Object = self
+            .cache
+            .get_object(&auto_tx.gas_id)
+            .ok()?
+            .expect("There must be an object");
+        if !gas.is_gas_coin() {
+            return None;
+        }
+        let balance = gas.as_coin_maybe().expect("Should be a coin").value();
+        // compute arguments and type_inputs
+        let mut type_inputs =
+            bcs::from_bytes::<Vec<TypeTag>>(auto_tx.type_inputs.as_slice()).ok()?;
+
+        let arguments = bcs::from_bytes::<Vec<MoveCallArg>>(auto_tx.arguments.as_slice())
+            .ok()?
+            .into_iter()
+            .zip(type_inputs.iter_mut())
+            .filter_map(|(arg, input)| match arg {
+                MoveCallArg::Pure(s) => Some(CallArg::Pure(s)),
+                MoveCallArg::Object(value) => {
+                    let read = self.cache.get_object(&value.id);
+                    if read.is_err() {
+                        return None;
+                    }
+                    let obj = read
+                        .expect("Should be able to read")
+                        .expect("There must be an object");
+
+                    // modify the type tag.
+                    if let Ok(tag) = obj.get_move_template_type() {
+                        *input = tag;
+                    } else {
+                        return None;
+                    }
+
+                    if obj.is_shared() {
+                        Some(CallArg::Object(ObjectArg::SharedObject {
+                            id: value.id,
+                            initial_shared_version: value.version,
+                            mutable: value.mutable,
+                        }))
+                    } else if value.receiving {
+                        Some(CallArg::Object(ObjectArg::Receiving(
+                            obj.compute_object_reference(),
+                        )))
+                    } else {
+                        Some(CallArg::Object(ObjectArg::ImmOrOwnedObject(
+                            obj.compute_object_reference(),
+                        )))
+                    }
+                }
+            })
+            .collect::<Vec<_>>();
+        if arguments.len() != auto_tx.arguments.len() {
+            // corrupted arguments, skip this transaction.
+            return None;
+        }
+        let tx = AutoExecutableTransaction::try_from_obj(
+            &auto_tx,
+            &gas,
+            balance,
+            gas_price,
+            type_inputs,
+            arguments,
+        )?;
+        Some(tx)
     }
 
     pub fn update(

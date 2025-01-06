@@ -435,6 +435,8 @@ impl From<StructTag> for MoveObjectType {
             MoveObjectType_::Coin(s.type_params.pop().unwrap())
         } else if StakedSui::is_staked_sui(&s) {
             MoveObjectType_::StakedSui
+        } else if AutoTx::is_auto_tx(&s) {
+            MoveObjectType_::AutoTx
         } else {
             MoveObjectType_::Other(s)
         })

@@ -4831,9 +4831,24 @@ sqrt
 to_string
 	public fun
 	0x1::u8
+ObjectRef
+	public struct
+	0xa070::auto_tx
 AutoTx
 	public struct
 	0xa070::auto_tx
+TypeTag
+	public enum
+	0xa070::auto_tx
+CallArg
+	public enum
+	0xa070::auto_tx
+create_object_ref
+	public fun
+	0xa070::auto_tx
 create_auto_tx
+	public fun
+	0xa070::auto_tx
+drop_auto_tx
 	public fun
 	0xa070::auto_tx

@@ -363,6 +363,21 @@ impl MoveObject {
         let balances = self.get_coin_balances(layout_resolver)?;
         Ok(balances.get(&GAS::type_tag()).copied().unwrap_or(0))
     }
+
+    #[cfg(test)]
+    pub fn create_for_test(
+        type_: MoveObjectType,
+        has_public_transfer: bool,
+        version: SequenceNumber,
+        contents: &Vec<u8>,
+    ) -> Self {
+        Self {
+            type_,
+            has_public_transfer,
+            version,
+            contents: contents.to_owned(),
+        }
+    }
 }
 
 // Helpers for extracting Coin<T> balances for all T

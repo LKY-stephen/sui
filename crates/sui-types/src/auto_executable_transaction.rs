@@ -1,6 +1,7 @@
-use crate::base_types::ObjectID;
+use crate::base_types::{ObjectID, SequenceNumber};
 use crate::crypto::default_hash;
 use crate::digests::TransactionDigest;
+use crate::programmable_transaction_builder::ProgrammableTransactionBuilder;
 use crate::transaction::{
     CallArg, TransactionData, TransactionDataAPI, TransactionKey, TransactionKind,
 };
@@ -81,6 +82,15 @@ impl AutoTx {
         }
     }
 
+    pub fn is_auto_tx(s: &StructTag) -> bool {
+        s.address == TALUS_FRAMEWORK_ADDRESS
+            && s.module == AUTO_EXECUTION_MODULE_NAME.to_owned()
+            && s.name == AUTO_EXECUTION_STRUCT_NAME.to_owned()
+            && s.type_params
+                .iter()
+                .zip(AUTO_EXECUTION_TYPE_PARAMS.iter())
+                .all(|(a, b)| a == b)
+    }
     pub fn layout() -> MoveStructLayout {
         MoveStructLayout {
             type_: Self::struct_tag(),
@@ -129,6 +139,22 @@ impl AutoTx {
     pub fn trigger_time(&self) -> TimestampMs {
         self.trigger_time
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MoveObjectRef {
+    pub id: ObjectID,
+    pub version: SequenceNumber,
+    pub mutable: bool,
+    pub receiving: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+pub enum MoveCallArg {
+    // contains no structs or objects
+    Pure(Vec<u8>),
+    // an object
+    Object(MoveObjectRef),
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq, Eq, Hash)]
@@ -198,26 +224,41 @@ impl AutoExecutableTransaction {
         })
     }
 
-    pub fn try_from_obj(auto_tx: &AutoTx, gas: &Object, balance: u64, price: u64) -> Option<Self> {
-        let transaction = TransactionData::new_move_call_with_gas_coins(
+    pub fn try_from_obj(
+        auto_tx: &AutoTx,
+        gas: &Object,
+        balance: u64,
+        price: u64,
+        type_inputs: Vec<TypeTag>,
+        arguments: Vec<CallArg>,
+    ) -> Option<Self> {
+        let pt = {
+            let mut builder = ProgrammableTransactionBuilder::new();
+            builder
+                .move_call(
+                    auto_tx.callee,
+                    Identifier::from_utf8(auto_tx.module_name.clone())
+                        .expect("Invalid module name"),
+                    Identifier::from_utf8(auto_tx.function_name.clone())
+                        .expect("Invalid function name"),
+                    type_inputs,
+                    arguments,
+                )
+                .unwrap();
+            builder.finish()
+        };
+        let transaction = TransactionData::new_with_gas_coins(
+            TransactionKind::AutonomousExecution(pt),
             auto_tx.caller.into(),
-            auto_tx.callee,
-            Identifier::from_utf8(auto_tx.module_name.clone()).expect("Invalid module name"),
-            Identifier::from_utf8(auto_tx.function_name.clone()).expect("Invalid function name"),
-            bcs::from_bytes::<Vec<TypeTag>>(auto_tx.type_inputs.as_slice())
-                .expect("Invalid type inputs"),
-            vec![(gas.id(), gas.version(), gas.digest())],
-            bcs::from_bytes::<Vec<CallArg>>(auto_tx.arguments.as_slice())
-                .expect("Invalid arguments"),
+            vec![gas.compute_object_reference()],
             balance,
             price,
-        )
-        .expect("Transaction creation failed");
+        );
         let id: ObjectID = auto_tx.id.object_id().to_owned();
         if gas.get_single_owner().is_some_and(|x| x != id.into()) {
             return None;
         }
-        Some(Self::new(id, 0, transaction)?)
+        Some(Self::new(id, auto_tx.trigger_time(), transaction)?)
     }
 
     // Returns the primary key for this transaction.
@@ -227,5 +268,73 @@ impl AutoExecutableTransaction {
 
     pub fn digest(&self) -> TransactionDigest {
         TransactionDigest::new(default_hash(self))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use crate::object::{MoveObject, Owner, OBJECT_START_VERSION};
+
+    use super::*;
+
+    #[test]
+    fn test_auto_tx_from_bcs_bytes() {
+        let auto_tx = AutoTx {
+            id: UID::new(ObjectID::random()),
+            trigger_time: 1234567890,
+            caller: ObjectID::random(),
+            callee: ObjectID::random(),
+            module_name: b"module".to_vec(),
+            function_name: b"function".to_vec(),
+            type_inputs: bcs::to_bytes(&Vec::<TypeTag>::new()).unwrap(),
+            gas_id: ObjectID::random(),
+            arguments: bcs::to_bytes(&Vec::<CallArg>::new()).unwrap(),
+        };
+        let bytes = bcs::to_bytes(&auto_tx).unwrap();
+        let deserialized_auto_tx = AutoTx::from_bcs_bytes(&bytes).unwrap();
+        assert_eq!(auto_tx, deserialized_auto_tx);
+    }
+
+    #[test]
+    fn test_auto_tx_try_from_object() {
+        let owner = Owner::AddressOwner(TALUS_FRAMEWORK_ADDRESS.clone().into());
+        let id = UID::new(ObjectID::random());
+        let gas = Object::with_owner_for_testing(id.object_id().to_owned().into());
+        let auto_tx = AutoTx {
+            id,
+            trigger_time: 1234567890,
+            caller: ObjectID::random(),
+            callee: ObjectID::random(),
+            module_name: b"module".to_vec(),
+            function_name: b"function".to_vec(),
+            type_inputs: bcs::to_bytes(&Vec::<TypeTag>::new()).unwrap(),
+            gas_id: gas.id(),
+            arguments: bcs::to_bytes(&Vec::<CallArg>::new()).unwrap(),
+        };
+        let bytes = bcs::to_bytes(&auto_tx).unwrap();
+        let obj = Object::new_move(
+            MoveObject::create_for_test(
+                AutoTx::struct_tag().into(),
+                false,
+                OBJECT_START_VERSION,
+                &bytes,
+            ),
+            owner,
+            TransactionDigest::random(),
+        );
+        let deserialized_auto_tx = AutoTx::try_from_object(&obj).unwrap();
+        assert_eq!(auto_tx, deserialized_auto_tx);
+
+        let auto_executable_transaction = AutoExecutableTransaction::try_from_obj(
+            &auto_tx,
+            &gas,
+            gas.as_coin_maybe().unwrap().balance.value(),
+            1,
+            vec![],
+            vec![],
+        );
+
+        assert!(auto_executable_transaction.is_some());
     }
 }
