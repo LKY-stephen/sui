@@ -4843,7 +4843,16 @@ TypeTag
 CallArg
 	public enum
 	0xa070::auto_tx
-create_object_ref
+create_type
+	public fun
+	0xa070::auto_tx
+minimum_gas
+	public fun
+	0xa070::auto_tx
+create_pure_Arg
+	public fun
+	0xa070::auto_tx
+create_object_Arg
 	public fun
 	0xa070::auto_tx
 create_auto_tx

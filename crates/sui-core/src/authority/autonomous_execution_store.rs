@@ -5,7 +5,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Bound::{Excluded, Included};
 use std::result::Result::Ok;
 use std::sync::{Arc, Mutex, RwLock};
-use sui_types::auto_executable_transaction::{AutoExecutableTransaction, AutoTx, MoveCallArg};
+use sui_types::auto_executable_transaction::{
+    AutoExecutableTransaction, AutoTx, MoveCallArg, MINMUM_GAS,
+};
 use sui_types::base_types::ObjectID;
 use sui_types::error::SuiResult;
 use sui_types::transaction::{CallArg, ObjectArg};
@@ -90,6 +92,9 @@ impl AutoExecutionStore {
             return None;
         }
         let balance = gas.as_coin_maybe().expect("Should be a coin").value();
+        if balance < MINMUM_GAS {
+            return None;
+        }
         // compute arguments and type_inputs
         let mut type_inputs =
             bcs::from_bytes::<Vec<TypeTag>>(auto_tx.type_inputs.as_slice()).ok()?;
@@ -119,7 +124,7 @@ impl AutoExecutionStore {
                     if obj.is_shared() {
                         Some(CallArg::Object(ObjectArg::SharedObject {
                             id: value.id,
-                            initial_shared_version: value.version,
+                            initial_shared_version: obj.version(),
                             mutable: value.mutable,
                         }))
                     } else if value.receiving {
@@ -165,48 +170,51 @@ impl AutoExecutionStore {
             .expect("cannot write to current auto execution store");
 
         // remove old objects
+        if !to_delete.is_empty() && !to_update.is_empty() {
+            to_delete
+                .into_iter()
+                .chain(to_update.clone().into_iter().map(|(_, id)| id))
+                .map(|id| (reverse.remove(&id).expect("should have a time"), id))
+                .into_group_map()
+                .into_iter()
+                .for_each(|(time, ids)| {
+                    let value = snapshot.get_mut(&time).expect("should have a time");
+                    if value.len() == ids.len() {
+                        // TODO: optimistic way, may be wrong.
+                        snapshot.remove(&time);
+                    } else {
+                        let dict: HashSet<ObjectID> = HashSet::from_iter(ids.into_iter());
+                        value.retain(|x| !dict.contains(x));
+                    }
+                });
+        }
 
-        to_delete
-            .into_iter()
-            .chain(to_update.clone().into_iter().map(|(_, id)| id))
-            .map(|id| (reverse.remove(&id).expect("should have a time"), id))
-            .into_group_map()
-            .into_iter()
-            .for_each(|(time, ids)| {
-                let value = snapshot.get_mut(&time).expect("should have a time");
-                if value.len() == ids.len() {
-                    // TODO: optimistic way, may be wrong.
-                    snapshot.remove(&time);
-                } else {
-                    let dict: HashSet<ObjectID> = HashSet::from_iter(ids.into_iter());
-                    value.retain(|x| !dict.contains(x));
-                }
-            });
-
-        // add new objects
-        let clock = self.clock.lock().expect("cannot lock clock");
-        to_add
-            .into_iter()
-            .chain(to_update.into_iter())
-            .map(|(t, id)| {
-                if t < *clock {
-                    // cannot create a new task for old time
-                    (*clock, id)
-                } else {
-                    (t, id)
-                }
-            })
-            .into_group_map()
-            .into_iter()
-            .for_each(|(time, ids)| {
-                if snapshot.contains_key(&time) {
-                    snapshot
-                        .get_mut(&time)
-                        .expect("should have a time")
-                        .extend(ids);
-                } else {
-                    snapshot.insert(time, ids);
-                }
-            });
+        // add new objects{
+        if !to_add.is_empty() && !to_update.is_empty() {
+            let clock = self.clock.lock().expect("cannot lock clock");
+            to_add
+                .into_iter()
+                .chain(to_update.into_iter())
+                .map(|(t, id)| {
+                    if t < *clock {
+                        // cannot create a new task for old time
+                        (*clock, id)
+                    } else {
+                        (t, id)
+                    }
+                })
+                .into_group_map()
+                .into_iter()
+                .for_each(|(time, ids)| {
+                    if snapshot.contains_key(&time) {
+                        snapshot
+                            .get_mut(&time)
+                            .expect("should have a time")
+                            .extend(ids);
+                    } else {
+                        snapshot.insert(time, ids);
+                    }
+                });
+        }
     }
 }

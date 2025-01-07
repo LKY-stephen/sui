@@ -1091,6 +1091,11 @@ impl AuthorityPerEpochStore {
                 }
             }
         });
+
+        if to_add.is_empty() && to_update.is_empty() && to_delete.is_empty() {
+            return;
+        }
+
         self.autonomous_execution_store.update(
             to_add,
             to_update,

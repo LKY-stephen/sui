@@ -1,0 +1,13 @@
+[package]
+name = "responser"
+edition = "2024.beta"
+
+
+[dependencies]
+Sui = { local = "../../../../crates/sui-framework/packages/sui-framework" }
+Talus = { local = "../../../../crates/sui-framework/packages/talus-framework" }
+challenger = {local = "../challenger"}
+
+[addresses]
+responser = "0x0"
+

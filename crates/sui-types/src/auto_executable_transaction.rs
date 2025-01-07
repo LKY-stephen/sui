@@ -1,4 +1,4 @@
-use crate::base_types::{ObjectID, SequenceNumber};
+use crate::base_types::ObjectID;
 use crate::crypto::default_hash;
 use crate::digests::TransactionDigest;
 use crate::programmable_transaction_builder::ProgrammableTransactionBuilder;
@@ -30,6 +30,8 @@ pub const GAS_DIGEST: &IdentStr = ident_str!("gas_digest");
 pub const ARGUMENTS: &IdentStr = ident_str!("arguments");
 pub const GAS_BUDGET: &IdentStr = ident_str!("gas_budget");
 pub const GAS_PRICE: &IdentStr = ident_str!("gas_price");
+
+pub const MINMUM_GAS: u64 = 1_000_000;
 
 use once_cell::sync::Lazy;
 pub static AUTO_EXECUTION_TYPE_PARAMS: Lazy<Vec<TypeTag>> = Lazy::new(|| {
@@ -144,7 +146,6 @@ impl AutoTx {
 #[derive(Serialize, Deserialize)]
 pub struct MoveObjectRef {
     pub id: ObjectID,
-    pub version: SequenceNumber,
     pub mutable: bool,
     pub receiving: bool,
 }

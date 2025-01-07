@@ -5,7 +5,6 @@ published-at = "0xa070"
 edition = "2024.beta"
 
 [dependencies]
-MoveStdlib = { local = "../move-stdlib" }
 Sui = { local = "../sui-framework" }
 
 [addresses]
